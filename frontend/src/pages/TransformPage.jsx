@@ -1,299 +1,285 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import TransformRibbon from '@/components/transform/TransformRibbon';
+import QueriesPane from '@/components/transform/QueriesPane';
+import FormulaBar from '@/components/transform/FormulaBar';
+import DataPreviewGrid from '@/components/transform/DataPreviewGrid';
+import QuerySettingsPane from '@/components/transform/QuerySettingsPane';
+import StatusBar from '@/components/transform/StatusBar';
+import StepDialog from '@/components/transform/StepDialog';
+import { getDataset } from '@/lib/datasetsApi';
+import { getOriginalRows, listSteps, createStep, deleteStep, reorderSteps } from '@/lib/transformsApi';
+import { replayStepsClientSide } from '@/lib/replaySteps';
+import { useToast } from '@/components/ui/Toast';
 
-const OPERATIONS = [
-  { value: 'rename_column', label: 'Rename column' },
-  { value: 'change_type', label: 'Change type' },
-  { value: 'remove_column', label: 'Remove column' },
-  { value: 'reorder_columns', label: 'Reorder columns' },
-  { value: 'filter_rows', label: 'Filter rows' },
-  { value: 'remove_duplicates', label: 'Remove duplicates' },
-  { value: 'trim_text', label: 'Trim text' },
-  { value: 'split_column', label: 'Split column' },
-  { value: 'fill_down', label: 'Fill down' },
-];
+const OPERATION_TITLES = {
+  rename_column: 'Rename Column',
+  change_type: 'Change Type',
+  remove_column: 'Remove Column',
+  filter_rows: 'Filter Rows',
+  remove_duplicates: 'Remove Duplicates',
+  trim_text: 'Trim / Case',
+  split_column: 'Split Column',
+  fill_down: 'Fill Down',
+};
 
-function StepForm({ columns, onAdd }) {
-  const [operation, setOperation] = useState(OPERATIONS[0].value);
-  const [column, setColumn] = useState('');
-  const [newName, setNewName] = useState('');
-  const [targetType, setTargetType] = useState('text');
-  const [operator, setOperator] = useState('equals');
-  const [value, setValue] = useState('');
-  const [caseTransform, setCaseTransform] = useState('none');
-  const [delimiter, setDelimiter] = useState(',');
-  const [newColumns, setNewColumns] = useState('');
-  const [columnOrder, setColumnOrder] = useState('');
-  const [dupColumns, setDupColumns] = useState('');
-
-  function buildParams() {
-    switch (operation) {
-      case 'rename_column':
-        return { column, new_name: newName };
-      case 'change_type':
-        return { column, target_type: targetType };
-      case 'remove_column':
-        return { column };
-      case 'reorder_columns':
-        return { column_order: columnOrder.split(',').map((s) => s.trim()).filter(Boolean) };
-      case 'filter_rows':
-        return { column, operator, value };
-      case 'remove_duplicates':
-        return {
-          columns: dupColumns.split(',').map((s) => s.trim()).filter(Boolean),
-        };
-      case 'trim_text':
-        return { column, case_transform: caseTransform === 'none' ? undefined : caseTransform };
-      case 'split_column':
-        return {
-          column,
-          delimiter,
-          new_columns: newColumns.split(',').map((s) => s.trim()).filter(Boolean),
-        };
-      case 'fill_down':
-        return { column };
-      default:
-        return {};
-    }
-  }
-
-  function handleSubmit(e) {
-    e.preventDefault();
-    onAdd(operation, buildParams());
-  }
-
-  const needsColumn = !['reorder_columns', 'remove_duplicates'].includes(operation);
-
-  return (
-    <form className="step-form" onSubmit={handleSubmit}>
-      <label>
-        Operation{' '}
-        <select value={operation} onChange={(e) => setOperation(e.target.value)}>
-          {OPERATIONS.map((op) => (
-            <option key={op.value} value={op.value}>
-              {op.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {needsColumn && (
-        <label>
-          Column{' '}
-          <select value={column} onChange={(e) => setColumn(e.target.value)}>
-            <option value="">-- select --</option>
-            {columns.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      {operation === 'rename_column' && (
-        <label>
-          New name <input value={newName} onChange={(e) => setNewName(e.target.value)} />
-        </label>
-      )}
-
-      {operation === 'change_type' && (
-        <label>
-          Target type{' '}
-          <select value={targetType} onChange={(e) => setTargetType(e.target.value)}>
-            <option value="text">Text</option>
-            <option value="number">Number</option>
-            <option value="date">Date</option>
-            <option value="boolean">Boolean</option>
-          </select>
-        </label>
-      )}
-
-      {operation === 'reorder_columns' && (
-        <label>
-          Column order (comma-separated){' '}
-          <input value={columnOrder} onChange={(e) => setColumnOrder(e.target.value)} />
-        </label>
-      )}
-
-      {operation === 'filter_rows' && (
-        <>
-          <label>
-            Operator{' '}
-            <select value={operator} onChange={(e) => setOperator(e.target.value)}>
-              <option value="equals">Equals</option>
-              <option value="contains">Contains</option>
-              <option value="greater_than">Greater than</option>
-              <option value="less_than">Less than</option>
-              <option value="is_blank">Is blank</option>
-              <option value="is_not_blank">Is not blank</option>
-            </select>
-          </label>
-          {!['is_blank', 'is_not_blank'].includes(operator) && (
-            <label>
-              Value <input value={value} onChange={(e) => setValue(e.target.value)} />
-            </label>
-          )}
-        </>
-      )}
-
-      {operation === 'remove_duplicates' && (
-        <label>
-          Columns to match on (comma-separated, blank = whole row){' '}
-          <input value={dupColumns} onChange={(e) => setDupColumns(e.target.value)} />
-        </label>
-      )}
-
-      {operation === 'trim_text' && (
-        <label>
-          Case{' '}
-          <select value={caseTransform} onChange={(e) => setCaseTransform(e.target.value)}>
-            <option value="none">No change</option>
-            <option value="upper">UPPER</option>
-            <option value="lower">lower</option>
-          </select>
-        </label>
-      )}
-
-      {operation === 'split_column' && (
-        <>
-          <label>
-            Delimiter <input value={delimiter} onChange={(e) => setDelimiter(e.target.value)} />
-          </label>
-          <label>
-            New column names (comma-separated){' '}
-            <input value={newColumns} onChange={(e) => setNewColumns(e.target.value)} />
-          </label>
-        </>
-      )}
-
-      <button type="submit">Add step</button>
-    </form>
-  );
-}
+const COLUMN_SCOPED_OPERATIONS = new Set([
+  'rename_column',
+  'change_type',
+  'remove_column',
+  'trim_text',
+  'split_column',
+  'fill_down',
+]);
 
 export default function TransformPage() {
-  const { id } = useParams();
+  const { datasetId } = useParams();
+  const navigate = useNavigate();
+  const showToast = useToast();
+
+  const [dataset, setDataset] = useState(null);
+  const [originalRows, setOriginalRows] = useState([]);
   const [steps, setSteps] = useState([]);
-  const [rows, setRows] = useState([]);
-  const [rowCount, setRowCount] = useState(0);
-  const [error, setError] = useState(null);
+  const [selectedStepId, setSelectedStepId] = useState(null);
+  const [pendingDialog, setPendingDialog] = useState(null); // { operationType, editingStep }
+  const [formulaBarVisible, setFormulaBarVisible] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [closing, setClosing] = useState(false);
+  const [selectedColumn, setSelectedColumn] = useState(null);
+  const [creatingColumn, setCreatingColumn] = useState(false);
+  const [customColumnError, setCustomColumnError] = useState(null);
 
-  const refresh = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
-      const [stepsRes, viewRes] = await Promise.all([
-        fetch(`/api/datasets/${id}/transform-steps`),
-        fetch(`/api/datasets/${id}/transformed-view`),
+      const [datasetInfo, rows, stepList] = await Promise.all([
+        getDataset(datasetId),
+        getOriginalRows(datasetId, 500),
+        listSteps(datasetId),
       ]);
-      const stepsBody = await stepsRes.json();
-      const viewBody = await viewRes.json();
-
-      if (!stepsRes.ok) throw new Error(stepsBody.error || 'Failed to load steps.');
-      if (!viewRes.ok) throw new Error(viewBody.error || 'Failed to load transformed view.');
-
-      setSteps(stepsBody);
-      setRows(viewBody.rows);
-      setRowCount(viewBody.rowCount);
+      setDataset(datasetInfo);
+      setOriginalRows(rows);
+      setSteps(stepList);
+      setSelectedStepId(stepList.length > 0 ? stepList[stepList.length - 1].id : null);
     } catch (err) {
-      setError(err.message);
+      showToast(`Failed to load dataset: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [datasetId, showToast]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId]);
 
-  async function handleAdd(operationType, params) {
-    setError(null);
-    try {
-      const res = await fetch(`/api/datasets/${id}/transform-steps`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operation_type: operationType, params }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Failed to add step.');
-      await refresh();
-    } catch (err) {
-      setError(err.message);
+  const selectedStepIndex = useMemo(
+    () => steps.findIndex((s) => s.id === selectedStepId),
+    [steps, selectedStepId]
+  );
+
+  // No per-step-index preview endpoint exists on the backend (only the fully
+  // replayed /transformed-view). Re-derive the preview at the selected step
+  // client-side using the same op logic as the backend engine (see
+  // lib/replaySteps.js) — this never writes anything, purely a display concern.
+  const previewRows = useMemo(() => {
+    if (steps.length === 0) return originalRows;
+    const stepsUpToSelected = steps.slice(0, selectedStepIndex + 1);
+    return replayStepsClientSide(originalRows, stepsUpToSelected);
+  }, [originalRows, steps, selectedStepIndex]);
+
+  const currentColumns = useMemo(
+    () => (previewRows.length > 0 ? Object.keys(previewRows[0]) : []),
+    [previewRows]
+  );
+
+  const selectedStep = steps[selectedStepIndex] ?? null;
+
+  const openDialogFor = (operationType, column) => {
+    setPendingDialog({ operationType, editingStep: null, presetColumn: column });
+  };
+
+  const handleRibbonAction = (action) => {
+    if (action === 'close_and_load') {
+      handleCloseAndLoad();
+      return;
     }
-  }
+    openDialogFor(action, COLUMN_SCOPED_OPERATIONS.has(action) ? selectedColumn : undefined);
+  };
 
-  async function handleDelete(stepId) {
-    setError(null);
+  const handleColumnAction = (action, column) => {
+    const map = {
+      remove: 'remove_column',
+      rename: 'rename_column',
+      change_type: 'change_type',
+      filter: 'filter_rows',
+      trim: 'trim_text',
+    };
+    openDialogFor(map[action], column);
+  };
+
+  const handleEditStep = (step) => {
+    setPendingDialog({ operationType: step.operation_type, editingStep: step, presetColumn: null });
+  };
+
+  const handleDialogSubmit = async (params) => {
+    const { operationType, editingStep } = pendingDialog;
+    setPendingDialog(null);
     try {
-      const res = await fetch(`/api/datasets/${id}/transform-steps/${stepId}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error || 'Failed to delete step.');
+      if (editingStep) {
+        // No PATCH exists for step content — edit-in-place is delete + recreate.
+        // Recreate always appends to the end, so if the step wasn't already
+        // last, reorder afterward to keep it in its original position.
+        const originalIndex = steps.findIndex((s) => s.id === editingStep.id);
+        await deleteStep(datasetId, editingStep.id);
+        const created = await createStep(datasetId, operationType, params);
+        let nextSteps = steps.filter((s) => s.id !== editingStep.id).concat(created);
+        if (originalIndex < steps.length - 1) {
+          const reordered = [...steps.filter((s) => s.id !== editingStep.id)];
+          reordered.splice(originalIndex, 0, created);
+          const stepIds = reordered.map((s) => s.id);
+          nextSteps = await reorderSteps(datasetId, stepIds);
+        }
+        setSteps(nextSteps);
+        setSelectedStepId(created.id);
+      } else {
+        const created = await createStep(datasetId, operationType, params);
+        setSteps((prev) => [...prev, created]);
+        setSelectedStepId(created.id);
       }
-      await refresh();
     } catch (err) {
-      setError(err.message);
+      showToast(`Step failed: ${err.message}`, 'error');
     }
-  }
+  };
 
-  const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const handleDeleteStep = async (stepId) => {
+    try {
+      await deleteStep(datasetId, stepId);
+      const nextSteps = steps.filter((s) => s.id !== stepId);
+      setSteps(nextSteps);
+      if (selectedStepId === stepId) {
+        setSelectedStepId(nextSteps.length > 0 ? nextSteps[nextSteps.length - 1].id : null);
+      }
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`, 'error');
+    }
+  };
+
+  const handleMoveStep = async (stepId, direction) => {
+    const index = steps.findIndex((s) => s.id === stepId);
+    const swapWith = direction === 'up' ? index - 1 : index + 1;
+    if (swapWith < 0 || swapWith >= steps.length) return;
+
+    const reordered = [...steps];
+    [reordered[index], reordered[swapWith]] = [reordered[swapWith], reordered[index]];
+    try {
+      const nextSteps = await reorderSteps(datasetId, reordered.map((s) => s.id));
+      setSteps(nextSteps);
+    } catch (err) {
+      showToast(`Reorder failed: ${err.message}`, 'error');
+    }
+  };
+
+  const handleCloseAndLoad = async () => {
+    setClosing(true);
+    try {
+      showToast('Transform steps saved.', 'success');
+      navigate(`/report/${datasetId}`);
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const handleStartCreateColumn = () => {
+    setCustomColumnError(null);
+    setFormulaBarVisible(true);
+    setCreatingColumn(true);
+  };
+
+  const handleCancelCreateColumn = () => {
+    setCreatingColumn(false);
+    setCustomColumnError(null);
+  };
+
+  const handleCreateCustomColumn = async ({ columnName, expression }) => {
+    setCustomColumnError(null);
+    try {
+      const created = await createStep(datasetId, 'custom_column', { columnName, expression });
+      setSteps((prev) => [...prev, created]);
+      setSelectedStepId(created.id);
+      setCreatingColumn(false);
+    } catch (err) {
+      setCustomColumnError(err.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-white text-sm text-[#605E5C]">
+        Loading query editor...
+      </div>
+    );
+  }
 
   return (
-    <section>
-      <h1>Transform Dataset #{id}</h1>
-      <p>
-        <Link to="/import">Back to Import</Link>
-      </p>
+    <div className="flex h-screen flex-col bg-white">
+      <TransformRibbon
+        onAction={handleRibbonAction}
+        formulaBarVisible={formulaBarVisible}
+        onToggleFormulaBar={() => setFormulaBarVisible((v) => !v)}
+        hasColumnSelected={!!selectedColumn}
+        onStartCustomColumn={handleStartCreateColumn}
+      />
+      <FormulaBar
+        step={selectedStep}
+        visible={formulaBarVisible}
+        creatingColumn={creatingColumn}
+        onStartCreate={handleStartCreateColumn}
+        onCancelCreate={handleCancelCreateColumn}
+        onCreateCustomColumn={handleCreateCustomColumn}
+        error={customColumnError}
+      />
 
-      {error && <p className="error">{error}</p>}
-      {loading && <p>Loading…</p>}
-
-      <div className="transform-layout">
-        <div className="applied-steps">
-          <h2>Applied Steps</h2>
-          {steps.length === 0 && <p>No steps yet.</p>}
-          <ol>
-            {steps.map((step) => (
-              <li key={step.id}>
-                <strong>{step.operation_type}</strong>
-                <pre>{JSON.stringify(step.params, null, 0)}</pre>
-                <button onClick={() => handleDelete(step.id)}>Delete</button>
-              </li>
-            ))}
-          </ol>
-
-          <h3>Add Step</h3>
-          <StepForm columns={columns} onAdd={handleAdd} />
-        </div>
-
-        <div className="preview">
-          <h2>Preview ({rowCount} rows total)</h2>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  {columns.map((col) => (
-                    <th key={col}>{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, i) => (
-                  <tr key={i}>
-                    {columns.map((col) => (
-                      <td key={col}>{String(row[col] ?? '')}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <div className="flex min-h-0 flex-1">
+        <QueriesPane datasetName={dataset?.name ?? `Dataset ${datasetId}`} />
+        <DataPreviewGrid
+          rows={previewRows}
+          onColumnAction={handleColumnAction}
+          selectedColumn={selectedColumn}
+          onSelectColumn={setSelectedColumn}
+        />
+        <QuerySettingsPane
+          datasetName={dataset?.name ?? `Dataset ${datasetId}`}
+          steps={steps}
+          selectedStepId={selectedStepId}
+          onSelectStep={setSelectedStepId}
+          onEditStep={handleEditStep}
+          onDeleteStep={handleDeleteStep}
+          onMoveStep={handleMoveStep}
+        />
       </div>
-    </section>
+
+      <StatusBar rowCount={previewRows.length} columnCount={currentColumns.length} />
+
+      {pendingDialog && (
+        <StepDialog
+          operationType={pendingDialog.operationType}
+          title={OPERATION_TITLES[pendingDialog.operationType] ?? pendingDialog.operationType}
+          columns={currentColumns}
+          initialParams={
+            pendingDialog.editingStep?.params ??
+            (pendingDialog.presetColumn ? { column: pendingDialog.presetColumn } : {})
+          }
+          onSubmit={handleDialogSubmit}
+          onClose={() => setPendingDialog(null)}
+        />
+      )}
+
+      {closing && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30 text-sm text-white">
+          Loading...
+        </div>
+      )}
+    </div>
   );
 }

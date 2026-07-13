@@ -1,25 +1,9 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
-import { replaySteps, SUPPORTED_OPERATIONS } from '../transforms/engine.js';
+import { SUPPORTED_OPERATIONS } from '../transforms/engine.js';
+import { getSteps, getTransformedRows } from '../transforms/resolve.js';
 
 export const transformsRouter = Router();
-
-async function getOriginalRows(datasetId) {
-  const result = await pool.query(
-    `SELECT data FROM dataset_rows WHERE dataset_id = $1 ORDER BY row_index ASC`,
-    [datasetId]
-  );
-  return result.rows.map((r) => r.data);
-}
-
-async function getSteps(datasetId) {
-  const result = await pool.query(
-    `SELECT id, dataset_id, step_order, operation_type, params, created_at
-     FROM transform_steps WHERE dataset_id = $1 ORDER BY step_order ASC`,
-    [datasetId]
-  );
-  return result.rows;
-}
 
 transformsRouter.get('/datasets/:id/transform-steps', async (req, res) => {
   const steps = await getSteps(req.params.id);
@@ -125,12 +109,7 @@ transformsRouter.get('/datasets/:id/transformed-view', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 20, 500);
 
   try {
-    const [originalRows, steps] = await Promise.all([
-      getOriginalRows(datasetId),
-      getSteps(datasetId),
-    ]);
-
-    const transformed = replaySteps(originalRows, steps);
+    const transformed = await getTransformedRows(datasetId);
 
     res.json({
       rowCount: transformed.length,

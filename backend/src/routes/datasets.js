@@ -5,7 +5,7 @@ export const datasetsRouter = Router();
 
 // Scaffold-only: no auth yet, so uploads are attributed to a single
 // bootstrap user. Replace with real authenticated user_id once auth exists.
-async function getBootstrapUserId() {
+export async function getBootstrapUserId() {
   const existing = await pool.query('SELECT id FROM users LIMIT 1');
   if (existing.rows.length > 0) return existing.rows[0].id;
 
@@ -75,6 +75,25 @@ datasetsRouter.post('/datasets/confirm-import', async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// Creates a bare dataset for a DirectQuery-mode source. Row data is never
+// persisted for direct_query datasets; a data_connection is attached to it
+// afterward via POST /api/datasets/:id/connection.
+datasetsRouter.post('/datasets/direct-query', async (req, res) => {
+  const { name } = req.body;
+  if (!name || typeof name !== 'string') {
+    return res.status(400).json({ error: '"name" is required.' });
+  }
+
+  const userId = await getBootstrapUserId();
+  const result = await pool.query(
+    `INSERT INTO datasets (user_id, name, source_type, source_mode)
+     VALUES ($1, $2, 'live', 'direct_query')
+     RETURNING id, name, source_type, source_mode, created_at`,
+    [userId, name]
+  );
+  res.status(201).json(result.rows[0]);
 });
 
 datasetsRouter.get('/datasets/:id/rows', async (req, res) => {

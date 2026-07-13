@@ -1,0 +1,10 @@
+{
+  "name": "@bi-platform/transform-core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "dependencies": {
+    "mathjs": "^15.2.0"
+  }
+}
